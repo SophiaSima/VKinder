@@ -1,4 +1,7 @@
 # vk_api/vk_api_func.py
+import sys
+sys.path.append('../VKinder')
+
 import requests
 from config import USER_TOKEN, API_VERSION
 import time

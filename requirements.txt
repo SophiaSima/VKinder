@@ -1,4 +1,7 @@
 vk_api
 SQLAlchemy
 psycopg2-binary  
-python-dotenv    
+python-dotenv 
+os   
+sys
+pytest

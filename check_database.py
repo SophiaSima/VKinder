@@ -1,4 +1,6 @@
 # check_database.py
+import sys
+sys.path.append('../VKinder')
 import sqlite3
 import os
 from sqlalchemy import create_engine, inspect

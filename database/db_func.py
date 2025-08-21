@@ -1,11 +1,15 @@
 # database/db_func.py
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-from config import DATABASE_URL
-from database.db_models import User, SearchedProfile, favorites_table, shown_profiles_table
 from datetime import datetime
-# Измените импорт
-from vk_tools.vk_api_func import get_top_photos  # Было from vk_api.vk_api_func
+
+import sys
+sys.path.append('../VKinder')
+sys.path.append('../VKinder/database')
+sys.path.append('../VKinder/vk_tools')
+from config import DATABASE_URL
+from db_models import User, SearchedProfile, favorites_table, shown_profiles_table
+from vk_api_func import get_top_photos
 
 # Создаем движок и сессию для работы с БД
 engine = create_engine(DATABASE_URL)
