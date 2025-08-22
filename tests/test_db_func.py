@@ -1,5 +1,5 @@
-# tests/test_database.py
-# python3 -m  pytest tests/test_database.py
+# tests/test_db_func.py
+# python3 -m  pytest tests/test_db_func.py
 import sys
 sys.path.append('../VKinder/database')
 import pytest
@@ -8,8 +8,7 @@ from db_func import (
     add_searched_profile,
     mark_profile_as_shown,
     add_to_favorites,
-    get_favorites,
-    close_session
+    get_favorites
 )
 
 # Тестовые данные
@@ -59,7 +58,3 @@ def test_get_favorites():
     for fav in favorites:
         result = f'{fav.first_name} {fav.last_name}'
     assert result == 'Тест Профиль'
-
-# # 6. Закрываем сессию
-# close_session()
-# print("\n=== ТЕСТ ЗАВЕРШЕН ===")
