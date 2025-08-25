@@ -1,0 +1,37 @@
+vkinder_project2/
+│
+├── config.py                    # Конфигурация (токены, настройки БД)
+├── main.py                      # Точка входа
+├── requirements.txt             # Зависимости
+│
+├── database/                    # Работа с базой данных
+│   ├── __init__.py
+│   ├── db_creator.py           # Создание БД и таблиц
+│   ├── db_models.py            # Модели данных (новая структура!)
+│   └── db_func.py              # Функции для работы с БД
+│
+├── vk_tools/                    # Работа с VK API
+│   ├── __init__.py
+│   ├── vk_api_func.py          # Запросы к VK API
+│   └── vk_tools.py             # Утилиты (парсинг команд)
+│
+├── bot/                         # Логика бота
+│   ├── __init__.py
+│   ├── bot_core.py             # Ядро бота (LongPoll)
+│   ├── keyboard_utils.py       # Клавиатуры
+│   ├── message_handlers.py     # Обработчики сообщений
+│   └── texts.py                # Текстовые константы (НОВОЕ!)
+│
+├── services/                    # Бизнес-логика (НОВАЯ ПАПКА!)
+│   ├── __init__.py
+│   ├── search_service.py       # Логика поиска и избранного
+│   └── user_service.py         # Логика работы с пользователем
+│
+├── tests/                       # Тесты (переработанные)
+│   ├── __init__.py
+│   ├── test_models_only.py
+│   ├── test_search.py
+│   └── test_vk_api.py
+│
+└── docs/
+    └── MANUAL.md               # Документация

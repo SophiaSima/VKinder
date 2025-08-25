@@ -1,147 +1,241 @@
 # bot/message_handlers.py
-from bot.keyboard_utils import get_main_keyboard, get_empty_keyboard, get_favorites_keyboard
-from database.db_func import get_or_create_user, add_to_favorites, get_favorites
-# Измените импорты
-from vk_tools.vk_api_func import get_user_info, search_profiles, get_top_photos  # Было from vk_api.vk_api_func
-from vk_tools.vk_tools import parse_user_input  # Было from vk_api.vk_tools
+"""
+Обработчики сообщений для бота VKinder.
+"""
+from bot.keyboard_utils import create_main_keyboard
+from bot.texts import *
+from services.user_service import UserService
+from services.search_service import SearchService
+from config import MAX_PHOTOS
 
 
-class BotState:
-    """Класс для хранения состояния бота"""
+class MessageHandlers:
+    """Класс для обработки сообщений бота"""
 
-    def __init__(self):
-        self.user_states = {}  # user_id -> state_data
-        self.search_results = {}  # user_id -> [profiles]
-        self.current_index = {}  # user_id -> current_profile_index
+    def __init__(self, vk, session):
+        self.vk = vk
+        self.session = session
+        self.user_states = {}  # Хранение состояний пользователей
 
-    def get_user_state(self, user_id):
-        """Получает состояние пользователя"""
-        if user_id not in self.user_states:
-            self.user_states[user_id] = {'state': 'start', 'data': {}}
-        return self.user_states[user_id]
+    def handle_start(self, user_id):
+        """Обработка команды начала работы"""
+        try:
+            # Отправляем приветственное сообщение
+            self.vk.messages.send(
+                user_id=user_id,
+                message=WELCOME_MESSAGE,
+                random_id=0
+            )
 
-    def set_user_state(self, user_id, state, data=None):
-        """Устанавливает состояние пользователя"""
-        if data is None:
-            data = {}
-        self.user_states[user_id] = {'state': state, 'data': data}
+            # Получаем или создаем пользователя
+            user, error = UserService.get_or_create_user(user_id)
 
+            if error:
+                self.vk.messages.send(
+                    user_id=user_id,
+                    message=ERROR_PROFILE_INFO + f"\n\n{error}",
+                    random_id=0,
+                    keyboard=create_main_keyboard().get_keyboard()
+                )
+                return None
 
-# Глобальный объект состояния бота
-bot_state = BotState()
+            # Отправляем информацию о профиле
+            gender_text = "женский" if user.gender == 1 else "мужской"
+            self.vk.messages.send(
+                user_id=user_id,
+                message=PROFILE_INFO_RECEIVED.format(
+                    first_name=user.first_name,
+                    last_name=user.last_name,
+                    age=user.age,
+                    city=user.city,
+                    gender=gender_text
+                ),
+                random_id=0
+            )
 
+            # Инициализируем поиск
+            search, search_error = SearchService.initialize_search(user)
 
-def handle_start(user_id, message_text):
-    """Обработчик команды начала работы"""
-    user_info = get_user_info(user_id)
+            if search_error:
+                self.vk.messages.send(
+                    user_id=user_id,
+                    message=search_error,
+                    random_id=0,
+                    keyboard=create_main_keyboard().get_keyboard()
+                )
+                return None
 
-    if not user_info:
-        return "Не могу получить ваши данные из VK. Проверьте настройки приватности.", get_empty_keyboard()
+            # Сохраняем состояние пользователя
+            self.user_states[user_id] = {
+                'user_id': user.id,
+                'search_id': search.id,
+                'current_profile': None
+            }
 
-    if not user_info.get('city'):
-        return "В вашем профиле не указан город. Укажите город в настройках VK и попробуйте снова.", get_empty_keyboard()
+            # Показываем первый профиль
+            self.show_next_profile(user_id)
 
-    # Сохраняем пользователя в БД
-    user = get_or_create_user(**user_info)
+            return user
 
-    # Ищем кандидатов
-    profiles = search_profiles(user_info['age'], user_info['gender'], user_info['city'])
+        except Exception as e:
+            print(f"❌ Ошибка в handle_start: {e}")
+            self.vk.messages.send(
+                user_id=user_id,
+                message=ERROR_GENERIC,
+                random_id=0
+            )
 
-    if not profiles:
-        return "К сожалению, не найдено подходящих анкет. Попробуйте позже.", get_empty_keyboard()
+    def show_next_profile(self, user_id):
+        """Показывает следующий профиль"""
+        try:
+            if user_id not in self.user_states:
+                self.handle_start(user_id)
+                return
 
-    # Сохраняем результаты поиска
-    bot_state.search_results[user_id] = profiles
-    bot_state.current_index[user_id] = 0
-    bot_state.set_user_state(user_id, 'browsing')
+            state = self.user_states[user_id]
+            profile, photos, error = SearchService.get_next_profile(
+                state['user_id'],
+                state['search_id']
+            )
 
-    return show_next_profile(user_id)
+            if error:
+                self.vk.messages.send(
+                    user_id=user_id,
+                    message=NO_MORE_PROFILES,
+                    random_id=0,
+                    keyboard=create_main_keyboard().get_keyboard()
+                )
+                return
 
+            # Сохраняем текущий профиль
+            state['current_profile'] = profile
 
-def show_next_profile(user_id):
-    """Показывает следующего кандидата"""
-    if user_id not in bot_state.search_results or user_id not in bot_state.current_index:
-        return handle_start(user_id, "")
+            # Форматируем сообщение
+            message = PROFILE_MESSAGE.format(
+                first_name=profile.first_name,
+                last_name=profile.last_name,
+                profile_link=profile.profile_link,
+                photos_count=len(photos) if photos else 0
+            )
 
-    profiles = bot_state.search_results[user_id]
-    current_index = bot_state.current_index[user_id]
+            # Отправляем сообщение с фото
+            attachment = ','.join(photos[:MAX_PHOTOS]) if photos else ''
 
-    if current_index >= len(profiles):
-        return "Анкеты закончились! 🎉 Нажмите '🔄 Начать заново' для нового поиска.", get_main_keyboard()
+            self.vk.messages.send(
+                user_id=user_id,
+                message=message,
+                attachment=attachment,
+                random_id=0,
+                keyboard=create_main_keyboard().get_keyboard()
+            )
 
-    profile = profiles[current_index]
+        except Exception as e:
+            print(f"❌ Ошибка в show_next_profile: {e}")
+            self.vk.messages.send(
+                user_id=user_id,
+                message=ERROR_GENERIC,
+                random_id=0
+            )
 
-    # Получаем фотографии
-    photos = get_top_photos(profile['vk_id'])
+    def handle_add_to_favorites(self, user_id):
+        """Обработка добавления в избранное"""
+        try:
+            if (user_id not in self.user_states or
+                    not self.user_states[user_id].get('current_profile')):
+                self.vk.messages.send(
+                    user_id=user_id,
+                    message="Сначала начни поиск!",
+                    random_id=0,
+                    keyboard=create_main_keyboard().get_keyboard()
+                )
+                return
 
-    # Формируем сообщение
-    message = f"{profile['first_name']} {profile['last_name']}\n"
-    message += f"Ссылка: {profile['profile_link']}\n\n"
+            state = self.user_states[user_id]
+            profile_id = state['current_profile'].id
 
-    # Формируем attachment для фото
-    attachment = ','.join(photos) if photos else ""
+            success, error = SearchService.add_to_favorites(
+                state['user_id'],
+                profile_id
+            )
 
-    return message, get_main_keyboard(), attachment
+            if success:
+                self.vk.messages.send(
+                    user_id=user_id,
+                    message=FAVORITE_ADDED,
+                    random_id=0
+                )
+            else:
+                self.vk.messages.send(
+                    user_id=user_id,
+                    message=FAVORITE_ALREADY_ADDED if "уже" in str(error) else error,
+                    random_id=0
+                )
 
+        except Exception as e:
+            print(f"❌ Ошибка в handle_add_to_favorites: {e}")
+            self.vk.messages.send(
+                user_id=user_id,
+                message=ERROR_GENERIC,
+                random_id=0
+            )
 
-def handle_add_to_favorites(user_id):
-    """Добавление текущего профиля в избранное"""
-    if user_id not in bot_state.search_results or user_id not in bot_state.current_index:
-        return "Сначала начните поиск!", get_main_keyboard()
+    def handle_show_favorites(self, user_id):
+        """Показывает избранное пользователя"""
+        try:
+            if user_id not in self.user_states:
+                self.vk.messages.send(
+                    user_id=user_id,
+                    message="Сначала начни поиск!",
+                    random_id=0,
+                    keyboard=create_main_keyboard().get_keyboard()
+                )
+                return
 
-    current_index = bot_state.current_index[user_id]
-    profile = bot_state.search_results[user_id][current_index]
+            state = self.user_states[user_id]
+            favorites, error = SearchService.get_user_favorites(state['user_id'])
 
-    success = add_to_favorites(user_id, profile['vk_id'])
+            if error:
+                self.vk.messages.send(
+                    user_id=user_id,
+                    message=error,
+                    random_id=0
+                )
+                return
 
-    if success:
-        return "✅ Добавлено в избранное!", get_main_keyboard()
-    else:
-        return "❌ Уже в избранном!", get_main_keyboard()
+            if not favorites:
+                self.vk.messages.send(
+                    user_id=user_id,
+                    message=FAVORITES_EMPTY,
+                    random_id=0
+                )
+                return
 
+            # Форматируем список избранного
+            message = FAVORITES_LIST
+            for i, profile in enumerate(favorites, 1):
+                message += f"{i}. {profile.first_name} {profile.last_name}\n"
+                message += f"   Ссылка: {profile.profile_link}\n\n"
 
-def handle_show_favorites(user_id):
-    """Показывает избранное пользователя"""
-    favorites = get_favorites(user_id)
+            self.vk.messages.send(
+                user_id=user_id,
+                message=message,
+                random_id=0,
+                keyboard=create_main_keyboard().get_keyboard()
+            )
 
-    if not favorites:
-        return "В избранном пока никого нет 😢", get_main_keyboard()
+        except Exception as e:
+            print(f"❌ Ошибка в handle_show_favorites: {e}")
+            self.vk.messages.send(
+                user_id=user_id,
+                message=ERROR_GENERIC,
+                random_id=0
+            )
 
-    message = "⭐ Ваше избранное:\n\n"
-    for i, profile in enumerate(favorites, 1):
-        message += f"{i}. {profile.first_name} {profile.last_name}\n"
-        message += f"   Ссылка: {profile.profile_link}\n\n"
-
-    return message, get_favorites_keyboard()
-
-
-# bot/message_handlers.py
-def handle_message(user_id, message_text):
-    """Основной обработчик сообщений"""
-    print(f"Обработка сообщения: '{message_text}' от пользователя {user_id}")
-
-    command = parse_user_input(message_text)
-    current_state = bot_state.get_user_state(user_id)['state']
-
-    print(f"Распознанная команда: '{command}', текущее состояние: '{current_state}'")
-
-    if command == 'start' or current_state == 'start':
-        print("Запуск handle_start...")
-        return handle_start(user_id, message_text)
-
-    # ... остальной код без изменений
-
-    elif command == 'add_to_favorites':
-        return handle_add_to_favorites(user_id)
-
-    elif command == 'favorites':
-        return handle_show_favorites(user_id)
-
-    elif command == 'next':
-        # Увеличиваем индекс и показываем следующего
-        if user_id in bot_state.current_index:
-            bot_state.current_index[user_id] += 1
-        return show_next_profile(user_id)
-
-    else:
-        return "Не понимаю команду 😢 Используйте кнопки ниже!", get_main_keyboard()
+    def handle_help(self, user_id):
+        """Показывает справку по командам"""
+        self.vk.messages.send(
+            user_id=user_id,
+            message=HELP_MESSAGE,
+            random_id=0,
+            keyboard=create_main_keyboard().get_keyboard()
+        )

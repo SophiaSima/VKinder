@@ -1,6 +1,5 @@
-# vk_api/vk_api_func.py
 import requests
-from config import USER_TOKEN, API_VERSION
+from config import USER_TOKEN, API_VERSION, MAX_PHOTOS
 import time
 
 # Базовый URL для всех запросов к API VK
@@ -22,7 +21,7 @@ def make_vk_request(method, params):
         # Проверка на ошибки API VK
         if 'error' in data:
             error_msg = data['error'].get('error_msg', 'Unknown VK API error')
-            print(f"Ошибка VK API ({method}): {error_msg}")
+            print(f"❌ Ошибка VK API ({method}): {error_msg}")
             return None
 
         # Проверка на стандартные HTTP ошибки
@@ -31,9 +30,9 @@ def make_vk_request(method, params):
         return data['response']
 
     except requests.exceptions.RequestException as e:
-        print(f"Ошибка сети при запросе к {method}: {e}")
+        print(f"❌ Ошибка сети при запросе к {method}: {e}")
     except Exception as e:
-        print(f"Неожиданная ошибка при запросе к {method}: {e}")
+        print(f"❌ Неожиданная ошибка при запросе к {method}: {e}")
 
     return None
 
@@ -45,7 +44,7 @@ def get_user_info(user_id):
     """
     params = {
         'user_ids': user_id,
-        'fields': 'city,sex,bdate'  # Запрашиваем город, пол и дату рождения
+        'fields': 'city,sex,bdate,home_town'  # Запрашиваем город, пол, дату рождения и родной город
     }
 
     response = make_vk_request('users.get', params)
@@ -61,19 +60,22 @@ def get_user_info(user_id):
             current_year = time.localtime().tm_year
             age = current_year - birth_year
 
-        # Получаем название города, если он указан
+        # Получаем название города
         city_name = None
         if 'city' in user_data:
             city_name = user_data['city']['title']
-        elif 'home_town' in user_data and user_data['home_town']:  # Пробуем взять из "родного города"
+        elif 'home_town' in user_data and user_data['home_town']:
             city_name = user_data['home_town']
+
+        # Определяем пол (1 - женский, 2 - мужской, 0 - не указан)
+        gender = user_data.get('sex', 0)
 
         return {
             'vk_id': user_data['id'],
             'first_name': user_data.get('first_name', ''),
             'last_name': user_data.get('last_name', ''),
             'age': age,
-            'gender': user_data.get('sex', 0),  # 0 - пол не указан
+            'gender': gender,
             'city': city_name
         }
 
@@ -91,9 +93,9 @@ def search_profiles(age, gender, city, offset=0):
     params = {
         'count': 10,  # Количество результатов за один запрос
         'offset': offset,  # Смещение для пагинации
-        'fields': 'city,photo_max_orig',
-        'age_from': age - 5 if age else 18,  # Разброс возраста ±5 лет
-        'age_to': age + 5 if age else 45,
+        'fields': 'city,photo_max_orig,is_closed',
+        'age_from': max(18, age - 5) if age else 18,  # Разброс возраста ±5 лет
+        'age_to': min(100, age + 5) if age else 45,
         'sex': search_gender,
         'hometown': city,  # Родной город
         'has_photo': 1,  # Только с фотографией
@@ -108,9 +110,13 @@ def search_profiles(age, gender, city, offset=0):
         filtered_profiles = []
         for profile in response['items']:
             # Проверяем, что город совпадает и профиль не закрыт
-            if (profile.get('city') and
-                    profile['city']['title'] == city and
-                    not profile['is_closed']):
+            profile_city = None
+            if profile.get('city'):
+                profile_city = profile['city']['title']
+
+            if (profile_city and profile_city == city and
+                    not profile['is_closed'] and
+                    profile.get('photo_max_orig')):
                 filtered_profiles.append({
                     'vk_id': profile['id'],
                     'first_name': profile.get('first_name', ''),
@@ -123,7 +129,7 @@ def search_profiles(age, gender, city, offset=0):
     return []
 
 
-def get_top_photos(user_id, count=3):
+def get_top_photos(user_id, count=MAX_PHOTOS):
     """
     Получает топ-N фотографий пользователя по количеству лайков.
     """
@@ -153,3 +159,20 @@ def get_top_photos(user_id, count=3):
         return photo_attachments
 
     return []
+
+
+def get_city_id(city_name):
+    """
+    Получает ID города по названию.
+    """
+    params = {
+        'q': city_name,
+        'count': 1
+    }
+
+    response = make_vk_request('database.getCities', params)
+
+    if response and 'items' in response and len(response['items']) > 0:
+        return response['items'][0]['id']
+
+    return None
